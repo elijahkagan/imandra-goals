@@ -1,0 +1,10 @@
+(library
+ (name imandra_goals)
+ (public_name imandra-goals)
+ (libraries containers imandra-base.interactive
+            imandra-document.tyxml imandra-document
+            imandra-surface imandra-util)
+ (modes byte)
+ (flags
+  (:standard -w +a-4-29-42-44-48-50-58-32-60@8 -safe-string
+             -open Imandra_interactive -open Imandra_surface -open Imandra_util)))
