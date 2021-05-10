@@ -3,6 +3,7 @@
 (implicit_transitive_deps false)
 
 (generate_opam_files true)
+(version 1.0.5)
 (license proprietary)
 (maintainers "The Imandra team <tech@imandra.ai>")
 (bug_reports "The Imandra team <tech@imandra.ai>")
