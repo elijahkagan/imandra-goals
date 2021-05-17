@@ -1,4 +1,6 @@
 
+(** {1 Goal Manager} *)
+
 type t = {
   name     : string;
   section  : string option;

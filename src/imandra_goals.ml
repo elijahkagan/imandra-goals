@@ -1,8 +1,6 @@
 
 (** {1 Goal Manager} *)
 
-(** Do not use, for internal use only *)
-
 module D = Imandra_document.Document
 open Printf
 
@@ -259,12 +257,12 @@ module Report = struct
     match g.status, g.expected with
     | Closed { result=V_refuted _;_ }, True
     | Closed { result=V_proved _;_ }, False ->
-      D.p ~a:[D.A.yellow] "❌"
+      D.p ~a:[D.A.yellow; D.A.cls "text-danger"] "×"
     | Closed { result=V_proved _;_ }, True
     | Closed { result=V_refuted _;_ }, False ->
-      D.p ~a:[D.A.green] "✔️"
-    | Error _, _ -> D.p ~a:[D.A.red] "ERROR"
-    | _          -> D.p ~a:[D.A.yellow] "?"
+      D.p ~a:[D.A.green; D.A.cls "text-success"] "✔"
+    | Error _, _ -> D.p ~a:[D.A.red; D.A.cls "text-danger"] "ERROR"
+    | _          -> D.p ~a:[D.A.yellow; D.A.cls "text-warning"] "?"
 
   let item ?(compressed=false) (g:t) : D.t =
     Debug.tracef (fun k->k "Working on %s\n%!" g.name);
@@ -277,14 +275,17 @@ module Report = struct
           | Some p when not compressed ->
             D.fold ~folded_by_default:true ~summary:"proof" p
           | _ -> D.empty
+        and mk_model m =
+          if compressed then D.empty
+          else D.fold ~folded_by_default:false ~summary:"model" (Term.Model.to_doc m)
         in
         begin match result with
           | V.V_proved {proof=p;_} ->
             D.block [ D.bold @@ D.s "Proved"; mkproof p]
           | V.V_proved_upto {upto;_} ->
             D.bold @@ D.s_f "Proved up to %a" Event.print_upto upto;
-          | V.V_refuted {proof=p; _} ->
-            D.block [ D.bold @@ D.s "Refuted"; mkproof p ]
+          | V.V_refuted {proof=p; model; _} ->
+            D.block [ D.bold @@ D.s "Refuted"; mk_model model; mkproof p ]
           | V.V_unknown {proof=p;_} ->
             D.block [D.bold @@ D.s "Unknown"; mkproof p]
         end
