@@ -18,7 +18,8 @@ type t = {
 and status =
   | Open of { assigned_to : owner option }
   | Closed of {
-    date   : float;
+    timestamp : float;
+    duration : float;
     result : Verify.t;
   }
   | Error of string
@@ -118,11 +119,8 @@ let init ?section ?owner ?(expected=Unknown) ?hints ~desc ~name () : unit =
 let focus () =
   State.(!state.focus)
 
-let status_of (r : Verify.t) =
-  Closed { date   = Unix.time ();
-           result = r; }
-
 let close_goal ?hints g =
+  let timestamp = Unix.gettimeofday() in
   let finalise g =
     State.update g;
     State.Set.focus None;
@@ -135,8 +133,9 @@ let close_goal ?hints g =
   in
   try
     let r = Verify.top ?hints g.name in
-    let g = { g with
-              status = status_of r } in
+    let duration = Unix.gettimeofday() -. timestamp in
+    let status = Closed { timestamp; duration; result=r; } in
+    let g = { g with status  } in
     finalise g
   with _ ->
     let s = sprintf "Verification error: %s undefined?" g.name in
@@ -155,14 +154,6 @@ let close ?hints ?name () =
 
 let verify_ ?hints = close ?hints
 
-let opens () =
-  List.filter (fun (_, g) -> match g.status with Open _ | Error _ -> true | _ -> false)
-    State.(list_of_goals ())
-
-let closed () =
-  List.filter (fun (_, g) -> match g.status with Closed _ -> true | _ -> false)
-    State.(list_of_goals ())
-
 let all () =
   State.(!state.goals) |> CCHashtbl.to_list
 
@@ -180,16 +171,31 @@ let write_to_file filename s =
 module Report = struct
   type progress = Complete of int | Partial of int * int
 
-  let doc_of_progress = function
-    | Complete k -> D.s_f "Verification complete: %d out of %d goals verified" k k
-    | Partial (k,k') ->
-      D.s_f "Verification incomplete: %d out of %d goals verified" k k'
+  let ok_green = D.p ~a:[D.A.green; D.A.cls "text-success"] "✔"
+  let bad_red = D.p ~a:[D.A.yellow; D.A.cls "text-danger"] "×"
 
-  type stat = {
-    proved: int;
-    total: int;
-    time: float;
-  }
+  let doc_of_progress = function
+    | Complete k ->
+      D.block [ok_green; D.s_f "Verification complete: %d out of %d goals verified" k k]
+    | Partial (k,k') ->
+      D.block [bad_red; D.s_f "Verification incomplete: %d out of %d goals verified" k k']
+
+  module Stat = struct
+    type t = {
+      proved: int;
+      total: int;
+      time: float;
+    }
+
+    let to_doc self : D.t =
+      let {proved; total; time} = self in
+      D.record [
+        "proved", D.int proved;
+        "total", D.int total;
+        "time", D.s_f "%.2fs" time;
+      ]
+
+  end
 
   module Digest = struct
     type t = {
@@ -207,7 +213,7 @@ module Report = struct
         let q = (float_of_int a) /. (float_of_int b) *. 100. in
         int_of_float (floor q)
 
-    let doc_of_digest (_:id) (d : t) : D.t =
+    let doc_of_digest (d : t) : D.t =
       let p = percent_of_progress d.progress in
       D.record [
         "section name", D.s d.section_name;
@@ -217,7 +223,7 @@ module Report = struct
         D.list_of D.p d.goal_names;
       ]
 
-    let get_stats (hs:t list) : stat =
+    let get_stats (hs:t list) : Stat.t =
       let proved = ref 0 in
       let total  = ref 0 in
       let time   = ref 0. in
@@ -230,7 +236,7 @@ module Report = struct
           total  := !total  + b
       in
       List.iter (fun d -> f d.progress; time := !time +. d.elapsed_time) hs;
-      { proved= !proved; total= !total; time = !time; }
+      Stat.{ proved= !proved; total= !total; time = !time; }
   end
 
   let build_id () =
@@ -238,9 +244,10 @@ module Report = struct
     | Some s -> D.s_f "- Build commit ID %s" (String.trim s)
     | None -> D.empty
 
-  let in_header ~section_name ~status ~content : D.t =
+  let in_header ~section_name ~status ~content ~stats : D.t =
     D.block [
       D.section "Imandra Verification Report";
+      Stat.to_doc stats;
       D.block [
         D.section_f "Section: %s" section_name;
         doc_of_progress status;
@@ -256,11 +263,9 @@ module Report = struct
     let open Verify in
     match g.status, g.expected with
     | Closed { result=V_refuted _;_ }, True
-    | Closed { result=V_proved _;_ }, False ->
-      D.p ~a:[D.A.yellow; D.A.cls "text-danger"] "×"
+    | Closed { result=V_proved _;_ }, False -> bad_red
     | Closed { result=V_proved _;_ }, True
-    | Closed { result=V_refuted _;_ }, False ->
-      D.p ~a:[D.A.green; D.A.cls "text-success"] "✔"
+    | Closed { result=V_refuted _;_ }, False -> ok_green
     | Error _, _ -> D.p ~a:[D.A.red; D.A.cls "text-danger"] "ERROR"
     | _          -> D.p ~a:[D.A.yellow; D.A.cls "text-warning"] "?"
 
@@ -297,7 +302,14 @@ module Report = struct
       "result", sd;
     ]
 
-  let progress_of_oc opens closed =
+  let progress_of_oc goals =
+    let opens =
+      List.filter (fun (_, g) -> match g.status with Open _ | Error _ -> true | _ -> false)
+        goals
+    and closed =
+      List.filter (fun (_, g) -> match g.status with Closed _ -> true | _ -> false)
+        goals
+    in
     let k_o = List.length opens in
     let k_c = List.length closed in
     let proved =
@@ -311,14 +323,62 @@ module Report = struct
     if k_o = 0 then Complete k_c
     else Partial (proved, k_o + proved)
 
+  let by_section ~compressed l : D.t * Stat.t =
+    let goal_sections =
+      CCList.group_by
+        ~hash:(fun (_id, g) -> Hashtbl.hash g.section)
+        ~eq:(fun (_id1, g1) (_id2, g2) ->
+            CCEqual.option String.equal g1.section g2.section)
+        l
+    in
+
+    (* document for this section (all docs are in the same section) *)
+    let doc_of_sec ~section (goals:(_*goal) list) : D.t * Digest.t =
+      let progress = progress_of_oc goals in
+
+      (* compute digest *)
+      let elapsed_time =
+        List.fold_left
+          (fun n (_,g) -> match g.status with
+             | Closed {duration; _} -> n +. duration
+             | _ -> n) 0. goals
+      in
+      let digest =
+        Digest.{
+          progress; elapsed_time; section_name=section;
+          goal_names=List.map (fun (_,g) -> g.name) goals;
+        } in
+
+      D.block [
+        D.section section;
+        doc_of_progress progress;
+        Digest.doc_of_digest digest;
+        D.list_of (fun (_,x) -> item ~compressed x) goals
+      ], digest
+    in
+
+    let docs, digests =
+      List.map
+        (fun goals ->
+           let sec = match goals with (_,g)::_ -> g.section | _ -> None in
+           let sec = CCOpt.get_or ~default:"<no section>" sec in
+           let doc, digest = doc_of_sec ~section:sec goals in
+           (sec, doc), digest)
+        goal_sections
+      |> List.split
+    in
+    (* sort by section *)
+    let docs = List.sort (fun (s1,_)(s2,_) -> CCString.compare_natural s1 s2) docs in
+
+    let stats = Digest.get_stats digests in
+    D.list (List.map snd docs), stats
+
   let top ?(section_name=Section.to_string ()) ~compressed ~filename =
     try
-      let opens = opens () in
-      let closed = closed () in
-      let all = opens @ closed in
-      let gs = D.list_of (fun (_, x) -> item ~compressed x) all in
-      let progress = progress_of_oc opens closed in
-      let doc = in_header ~section_name ~status:progress ~content:gs in
+      let l = State.list_of_goals () in
+      let gs, stats = by_section ~compressed l in
+      let progress = progress_of_oc l in
+      let doc = in_header ~section_name ~status:progress ~content:gs ~stats in
       let html = Imandra_document_tyxml.to_string_html_doc doc in
       write_to_file (filename ^ ".html") html;
       (* TODO: put on top of file?

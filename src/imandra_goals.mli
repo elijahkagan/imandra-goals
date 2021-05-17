@@ -15,7 +15,8 @@ type t = {
 and status =
   | Open of { assigned_to : owner option }
   | Closed of {
-    date   : float;
+    timestamp : float;
+    duration : float;
     result : Verify.t;
   }
   | Error of string
@@ -50,8 +51,6 @@ val verify_ :
   ?name:t -> unit -> unit
 
 val all : unit -> (id * goal) list
-val opens : unit -> (id * goal) list
-val closed : unit -> (id * goal) list
 
 (** {2 Report} *)
 
