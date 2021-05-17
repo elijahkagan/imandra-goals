@@ -373,13 +373,30 @@ module Report = struct
     let stats = Digest.get_stats digests in
     D.list (List.map snd docs), stats
 
+  let doc_to_html (doc:D.t) : string =
+    let module H = Tyxml.Html in
+    let module DH = Imandra_document_tyxml in
+
+    let mapper = {
+      DH.Mapper.default
+      with
+
+      (* just force size of first column of records *)
+      DH.Mapper.attr_row = (fun self ~row ~col d ->
+          let d = DH.Mapper.default.DH.Mapper.attr_row self ~row ~col d in
+          if col>0 then d else (H.a_class ["col-3"] :> Html_types.td_attrib H.attrib) :: d);
+    } in
+
+    DH.Mapper.run_doc ~title:"Imandra report" mapper doc
+    |> DH.string_of_html_doc
+
   let top ?(section_name=Section.to_string ()) ~compressed ~filename =
     try
       let l = State.list_of_goals () in
       let gs, stats = by_section ~compressed l in
       let progress = progress_of_oc l in
       let doc = in_header ~section_name ~status:progress ~content:gs ~stats in
-      let html = Imandra_document_tyxml.to_string_html_doc doc in
+      let html = doc_to_html doc in
       write_to_file (filename ^ ".html") html;
       (* TODO: put on top of file?
       let time = Unix.gettimeofday () -. State.(!state.t_begin) in
