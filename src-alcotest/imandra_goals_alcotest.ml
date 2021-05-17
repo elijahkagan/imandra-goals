@@ -80,4 +80,6 @@ let run_tests ?report_name () =
         in
         at_exit write_report
   in
-  Alcotest.run "Verification Goals" tests
+  (* we lie to alcotest because it is not ready to see the light and
+     accept our whole set of parameters *)
+  Alcotest.run ~argv:[|"imandra"|] "Verification Goals" tests
