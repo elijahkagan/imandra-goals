@@ -171,8 +171,8 @@ let write_to_file filename s =
 module Report = struct
   type progress = Complete of int | Partial of int * int
 
-  let ok_green = D.p ~a:[D.A.green; D.A.cls "text-success"] "✔"
-  let bad_red = D.p ~a:[D.A.yellow; D.A.cls "text-danger"] "×"
+  let ok_green = D.p ~a:[D.A.cls "text-success"] "&check;"
+  let bad_red = D.p ~a:[D.A.cls "text-danger"] "×"
 
   let doc_of_progress = function
     | Complete k ->
